@@ -1,0 +1,128 @@
+---
+title: "ASU Salary Report"
+output:
+  html_document:
+    theme: readable
+    highlight: zenburn
+    toc: true
+params:
+  url:
+    value: x
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set( echo=F, message=F, warning=F )
+```
+
+```{r libraries, include=FALSE}
+library( dplyr )
+library( pander )
+library( knitr )
+library( gender )
+source( "utils.R" )
+```
+
+```{r data, include=FALSE}
+URL <- params$url
+d <- read.csv( URL )
+
+d <- add_gender( d )
+d <- add_titles( d )
+d <- fix_salary( d )
+
+d <-
+  d %>%
+  filter( title != "" & !is.na(title) ) %>%
+  filter( Department.Description %in% academic.units )
+```
+
+# Salary Range by Rank and Gender
+
+```{r overall-graph, fig.height=7, fig.width=10}
+t.salary <-
+  d %>%
+  group_by( title, gender ) %>%
+  summarize( q25=quantile(salary,0.25),
+             q50=quantile(salary,0.50),
+             q75=quantile(salary,0.75),
+             n=n() ) %>%
+  ungroup() %>%
+  mutate( p= round( n/sum(n), 2) )
+
+t.salary %>% build_graph( unit="ALL ASU" )
+```
+
+```{r overall-table, results="asis"}
+t.salary$q25 <- dollarize( t.salary$q25 )
+t.salary$q50 <- dollarize( t.salary$q50 )
+t.salary$q75 <- dollarize( t.salary$q75 )
+t.salary %>% knitr::kable( format="html" )
+```
+
+<br><hr><br>
+
+# Department Reports
+
+```{r dept-loop, results="asis", fig.height=7, fig.width=10}
+
+for( i in academic.units )
+{
+  d2 <- filter( d, Department.Description == i )
+  
+  if( nrow(d2) == 0 ) { next }
+
+  cat( paste( '<h1>', i, '</h1>' ) )
+
+  # --- Graph ---
+  t.salary <-
+    d2 %>%
+    group_by( title, gender ) %>%
+    summarize( q25=quantile(salary,0.25),
+               q50=quantile(salary,0.50),
+               q75=quantile(salary,0.75),
+               n=n() ) %>%
+    ungroup() %>%
+    mutate( p= round( n/sum(n), 2) )
+
+  t.salary %>% build_graph( unit=i )
+
+  # --- Top 5 Salaries ---
+  cat( paste( '<h3>', 'TOP FIVE SALARIES', '</h3>' ) )
+
+  top5 <- get_top5( d2 )
+  cat( top5 %>% knitr::kable( format="html" ) )
+
+  # --- Pay Range Table ---
+  cat( paste( '<h3>', 'PAY RANGE BY RANK AND GENDER', '</h3>' ) )
+
+  t.salary$q25 <- dollarize( t.salary$q25 )
+  t.salary$q50 <- dollarize( t.salary$q50 )
+  t.salary$q75 <- dollarize( t.salary$q75 )
+
+  cat( t.salary %>% knitr::kable( format="html" ) )
+
+  cat( '<br><hr><br>' )
+}
+```
+
+<style>
+td {
+    padding: 3px 15px 3px 15px;
+    text-align: center !important;
+}
+th {
+    padding: 3px 15px 3px 15px;
+    text-align: center !important;
+    font-weight: bold;
+    color: SlateGray !important;
+}
+h1 {
+    color: SlateGray !important;
+    font-size: 2.05em;
+    margin-top: 25px;
+}
+h3 {
+    color: SlateGray;
+    margin-top: 25px;
+}
+</style>

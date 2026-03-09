@@ -1,0 +1,288 @@
+---
+title: "Functions Demo"
+author: "Rachael Uhlmann"
+date: "2026-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/Users/rachaelsmacbook/Desktop/PAF514 Final ")
+
+library(dplyr)
+library(pander)
+library(knitr)
+library(gender)
+source("utils.R")
+```
+
+```{r}
+URL <- "https://docs.google.com/spreadsheets/d/1RoiO9bfpbXowprWdZrgtYXG9_WuK3NFemwlvDGdym7E/export?gid=1335284952&format=csv"
+d <- read.csv(URL)
+```
+## Step 2: Parse First Name
+
+The get_first_name() function extracts first names from the Full.Name field 
+which is formatted as "LAST, FIRST MIDDLE". It splits on the comma, trims 
+whitespace, and returns only the first word to handle compound names and 
+middle names consistently across all years of data.
+
+```{r}
+
+get_first_name <- function(name)
+{
+  # split on comma
+  parts <- strsplit(name, ",")
+  
+  # take what comes after the comma
+  first_part <- sapply(parts, function(x){ x[2] })
+  
+  # trim whitespace
+  first_part <- trimws(first_part)
+  
+  # take only first word (handles middle names)
+  first_part <- sapply(strsplit(first_part, " "), function(x){ x[1] })
+  
+  return(first_part)
+}
+  
+```
+
+```{r}
+
+# test get_first_name
+test_names <- head(d$Full.Name, 25)
+first_names <- get_first_name(name = test_names)
+data.frame(test_names, first_names)
+```
+## Step 3: Add Gender
+
+The add_gender() function queries the gender package using US birth 
+certificate data to assign probable gender based on first name. Names 
+not found in the database are coded as "uncoded" rather than left as NA.
+
+```{r}
+ 
+# Step 5: Merge gender back to dataset 
+
+add_gender <- function(d) 
+{ # Step 1: Extract first names
+ d$first.name <- get_first_name(d$Full.Name) 
+# Step 2: Get unique first names only 
+unique.names <- unique(d$first.name) 
+# Step 3: Query gender package 
+gen <- gender(unique.names) 
+# Step 4: Keep only name and gender columns 
+gen <- gen %>% select(name, gender) 
+# Step 5: Merge gender back to dataset 
+d <- merge(d, gen, 
+by.x = "first.name", 
+by.y = "name", 
+all.x = TRUE) 
+# Step 6: Recode NAs as uncoded 
+d$gender[is.na(d$gender)] <- "uncoded" 
+# Step 7: Make gender a factor 
+d$gender <- factor(d$gender, 
+levels=c("male","female","uncoded")) 
+return(d) }
+ 
+```
+ 
+```{r}
+library(genderdata)
+library(gender)
+
+# Test gender package directly
+test <- gender(c("James", "Mary", "John"))
+test
+```
+
+## Step 4: Standardize Job Titles
+
+The add_titles() function recodes the raw Job.Description field into five standardized categories: Full Professor, Associate Professor, Assistant Professor, Teaching Faculty, and Researcher. This standardization is necessary because job titles vary inconsistently across departments and years in the raw data.
+
+```{r}
+# Check what your first names look like
+head(unique(d$first.name), 20)
+
+```
+```{r}
+# Test add_gender
+d <- add_gender(d)
+
+# Check results
+head(d$gender)
+table(d$gender)
+```
+```{r}
+# Reload fresh data
+URL <- "https://docs.google.com/spreadsheets/d/1RoiO9bfpbXowprWdZrgtYXG9_WuK3NFemwlvDGdym7E/export?gid=1335284952&format=csv"
+d <- read.csv(URL)
+
+# Now run add_gender on fresh data
+d <- add_gender(d)
+
+# Check results
+head(d$gender)
+table(d$gender)
+```
+```{r}
+# Test add_titles
+d <- add_titles(d)
+
+# Check results
+table(d$title)
+```
+## Steps 5 & 6: Convert and Standardize Salary
+
+The fix_salary() function combines two steps — converting salary strings to numeric values by removing dollar signs and commas, then adjusting all salaries to full-time equivalent (FTE) so part-time and full-time employees can be compared fairly. Outliers include coaching staff and hourly workers 
+who are removed by get_study_sample() in Step 7.
+
+
+```{r}
+# Test fix_salary
+d <- fix_salary(d)
+
+# Check results
+summary(d$salary)
+head(d$salary)
+```
+```{r}
+# Find the $3.5 million salary
+d %>% 
+  filter(salary > 500000) %>%
+  select(Full.Name, Job.Description, Salary, FTE, salary)
+# Although these salaries are extremely high, this correlates to the salaries generally paid to coaches and presidents as well as other high positions. 
+
+```
+```{r}
+# Find suspiciously low salaries
+d %>%
+  filter(salary < 100) %>%
+  select(Full.Name, Job.Description, Salary, FTE, salary)
+# These are most definitely hourly rates for accompanists. That is why this number looks so strange.
+```
+## Step 7: Select Study Sample
+
+The get_study_sample() function filters the full ASU salary dataset down 
+to only academic faculty in approved academic units. This removes coaches, 
+administrators, and other non-faculty roles that would skew salary 
+comparisons. After filtering, 2,459 employees remain from the original 
+12,520.
+
+
+
+```{r}
+
+# Test get_study_sample
+d <- get_study_sample(d)
+
+# How many rows after filtering?
+nrow(d)
+
+# Verify titles look correct
+table(d$title)
+```
+
+
+```{r}
+create_salary_table <- function(d)
+{
+  t.salary <-
+    d %>%
+    filter(!is.na(title) & title != "") %>%
+    group_by(title, gender) %>%
+    summarize(q25 = quantile(salary, 0.25),
+              q50 = quantile(salary, 0.50),
+              q75 = quantile(salary, 0.75),
+              n = n()) %>%
+    ungroup() %>%
+    mutate(p = round(n/sum(n), 2))
+  
+  return(t.salary)
+}
+
+```
+
+## Step 8: Summarize Salaries by Rank and Gender
+
+The create_salary_table() function groups faculty by title and gender, 
+calculating the 25th, 50th, and 75th percentile salaries for each group. 
+Results reveal consistent gender pay gaps at every faculty rank, with male 
+faculty earning higher median salaries than female faculty across all five 
+title categories.
+
+```{r}
+# Test create_salary_table
+t.salary <- create_salary_table(d)
+pander(t.salary)
+```
+
+```{r}
+get_top5 <- function(d)
+{
+  d %>%
+    arrange(desc(salary)) %>%
+    select(Full.Name, gender, Job.Description, salary) %>%
+    mutate(salary = dollarize(salary)) %>%
+    head(5)
+}
+```
+
+```{r}
+# Test get_top5
+get_top5(d)
+```
+## Step 10: Top Five Salaries
+
+The get_top5() function returns the five highest paid employees in a given department, displaying name, gender, job title, and formatted salary. This provides quick context for understanding the salary ceiling within each academic unit.
+
+---
+
+## Part II: Department Loop
+
+The following loop iterates over every unique department in the study sample and prints a formatted salary summary table and top 5 earners for each department. This allows us to compare gender pay patterns across all academic units in a single automated pass.
+
+```{r department-loop, results='asis'}
+
+# Get sorted list of all unique departments in the study sample
+departments <- sort(unique(d$Department.Description))
+
+cat("**Total departments in study sample:**", length(departments), "\n\n")
+
+for (dept in departments) {
+  
+  # Filter to current department
+  d.dept <- d %>% filter(Department.Description == dept)
+  
+  # Skip departments with fewer than 5 employees (too small for meaningful comparison)
+  if (nrow(d.dept) < 5) next
+  
+  # Print department header
+  cat("\n\n###", dept, "\n\n")
+  cat("**N =**", nrow(d.dept), "faculty  |  ")
+  cat("**Gender breakdown:** Male =", sum(d.dept$gender == "male", na.rm = TRUE), 
+      ", Female =", sum(d.dept$gender == "female", na.rm = TRUE), 
+      ", Uncoded =", sum(d.dept$gender == "uncoded", na.rm = TRUE), "\n\n")
+  
+  # Salary table by title and gender
+  t.dept <- create_salary_table(d.dept)
+  
+  if (nrow(t.dept) > 0) {
+    cat("**Salary Summary by Title and Gender:**\n\n")
+    print(kable(t.dept, 
+                format = "html",
+                col.names = c("Title", "Gender", "25th %ile", "Median", "75th %ile", "N", "Proportion"),
+                digits = 0,
+                format.args = list(big.mark = ",")))
+    cat("\n\n")
+  }
+  
+  # Top 5 earners in department
+  cat("**Top 5 Earners:**\n\n")
+  top5.dept <- get_top5(d.dept)
+  print(kable(top5.dept, format = "html"))
+  cat("\n\n---\n\n")
+}
+```
+
